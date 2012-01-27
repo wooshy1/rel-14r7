@@ -31,6 +31,14 @@ config FB_TEGRA
 	help
 	  Framebuffer device support for the Tegra display controller.
 
+config FB_TEGRA_COMPAT
+	bool "Enable compatibility with older propietary NVidia OpenGLES libs"
+	depends on TEGRA_DC && FB = y
+	default FB
+	help
+	  Enable compatibility APIs required by the older propietary NVidia OpenGLES 
+	  libraries. If in doubt, say YES
+	  
 config TEGRA_DC_EXTENSIONS
 	bool "Tegra Display Controller Extensions"
 	depends on TEGRA_DC

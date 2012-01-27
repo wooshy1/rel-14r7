@@ -2741,11 +2741,15 @@ static int tegra_dc_probe(struct nvhost_device *ndev)
 	dc->vblank_syncpt = (dc->ndev->id == 0) ?
 		NVSYNCPT_VBLANK0 : NVSYNCPT_VBLANK1;
 
+#ifdef CONFIG_TEGRA_DC_EXTENSIONS
 	dc->ext = tegra_dc_ext_register(ndev, dc);
 	if (IS_ERR_OR_NULL(dc->ext)) {
 		dev_warn(&ndev->dev, "Failed to enable Tegra DC extensions.\n");
 		dc->ext = NULL;
 	}
+#else
+	dc->ext = NULL;
+#endif
 
 	/* interrupt handler must be registered before tegra_fb_register() */
 	if (request_irq(irq, tegra_dc_irq, IRQF_DISABLED,
@@ -2877,6 +2881,9 @@ static int tegra_dc_suspend(struct nvhost_device *ndev, pm_message_t state)
 		dc->out_ops->suspend(dc);
 
 	if (dc->enabled) {
+#ifdef FB_TEGRA_COMPAT
+		tegra_fb_suspend(dc->fb);
+#endif
 		_tegra_dc_disable(dc);
 
 		dc->suspended = true;
