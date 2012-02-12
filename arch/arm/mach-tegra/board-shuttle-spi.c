@@ -44,14 +44,23 @@
 #include "gpio-names.h"
 #include "devices.h"
 
+/* Shuttle HW does not use any SPI device, but registering them consumes
+   valuable DMA channels, so just skip registering them */
+ 
+#ifdef _REGISTER_UNUSED_SPI_
 static struct platform_device *shuttle_spi_devices[] __initdata = {
 	&tegra_spi_device1,
 	&tegra_spi_device2,
 	&tegra_spi_device3,
 	&tegra_spi_device4,
 };
+#endif
 
 int __init shuttle_spi_register_devices(void)
 {
+#ifdef _REGISTER_UNUSED_SPI_
 	return platform_add_devices(shuttle_spi_devices, ARRAY_SIZE(shuttle_spi_devices));
+#else
+	return 0;
+#endif
 }
