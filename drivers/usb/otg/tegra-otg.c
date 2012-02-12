@@ -142,7 +142,7 @@ static void tegra_otg_work(struct work_struct *work)
 			&& otg->gadget) {
 
 		usb_gadget_vbus_disconnect(otg->gadget);
-		//wake_unlock(&tegra->wake_lock);
+		wake_unlock(&tegra->wake_lock);
 		
 		spin_lock_irqsave(&tegra->lock, flags);
 		val = otg_readl(tegra, TEGRA_USB_PHY_WAKEUP_REG_OFFSET);
@@ -199,7 +199,7 @@ static void tegra_otg_work(struct work_struct *work)
 		otg_writel(tegra, val, TEGRA_USB_PHY_WAKEUP_REG_OFFSET);
 		spin_unlock_irqrestore(&tegra->lock, flags);
 
-		//wake_lock(&tegra->wake_lock);
+		wake_lock(&tegra->wake_lock);
 		usb_gadget_vbus_connect(otg->gadget);
 		
 	} else if ((to == OTG_STATE_B_PERIPHERAL) && (from == OTG_STATE_A_SUSPEND)
@@ -215,14 +215,14 @@ static void tegra_otg_work(struct work_struct *work)
 		otg_writel(tegra, val, TEGRA_USB_PHY_WAKEUP_REG_OFFSET);
 		spin_unlock_irqrestore(&tegra->lock, flags);
 
-		//wake_lock(&tegra->wake_lock);
+		wake_lock(&tegra->wake_lock);
 		usb_gadget_vbus_connect(otg->gadget);
 
 	} else if ((to == OTG_STATE_A_SUSPEND) && (from == OTG_STATE_B_PERIPHERAL)
 			&& otg->gadget) {
 
 		usb_gadget_vbus_disconnect(otg->gadget);
-		//wake_unlock(&tegra->wake_lock);
+		wake_unlock(&tegra->wake_lock);
 		
 		spin_lock_irqsave(&tegra->lock, flags);
 		val = otg_readl(tegra, TEGRA_USB_PHY_WAKEUP_REG_OFFSET);
@@ -236,6 +236,9 @@ static void tegra_otg_work(struct work_struct *work)
 
 	}
 
+	/* Delay a bit toensure registers are updated */
+	udelay(1);
+	
 	clk_disable(tegra->clk);
 }
 
@@ -345,6 +348,10 @@ void tegra_otg_set_host_mode(bool host_mode)
 		val &= ~TEGRA_VBUS_INT_EN;			/* We can't use VBUS ints in host mode */
 		otg_writel(tegra, val, TEGRA_USB_PHY_WAKEUP_REG_OFFSET);
 		spin_unlock_irqrestore(&tegra->lock, flags);		
+		
+		/* Delay a bit toensure registers are updated */
+		udelay(1);
+
 		clk_disable(tegra->clk);
 
 		/* Schedule the switch to host mode */
@@ -364,6 +371,10 @@ void tegra_otg_set_host_mode(bool host_mode)
 		val |=  TEGRA_VBUS_INT_EN;			/* Use VBUS ints in suspend mode to wakeup */
 		otg_writel(tegra, val, TEGRA_USB_PHY_WAKEUP_REG_OFFSET);
 		spin_unlock_irqrestore(&tegra->lock, flags);		
+		
+		/* Delay a bit toensure registers are updated */
+		udelay(1);
+
 		clk_disable(tegra->clk);
 	
 		/* Leave some time for VBUS stabilization */
@@ -439,7 +450,7 @@ static int tegra_otg_probe(struct platform_device *pdev)
 	tegra->otg.set_suspend = tegra_otg_set_suspend;
 	tegra->otg.set_power = tegra_otg_set_power;
 	spin_lock_init(&tegra->lock);
-	//wake_lock_init(&tegra->wake_lock, WAKE_LOCK_SUSPEND, "tegra_otg");
+	wake_lock_init(&tegra->wake_lock, WAKE_LOCK_SUSPEND, "tegra_otg");
 
 	platform_set_drvdata(pdev, tegra);
 	tegra_clone = tegra;
@@ -505,6 +516,13 @@ static int tegra_otg_probe(struct platform_device *pdev)
 
 	INIT_WORK (&tegra->work, tegra_otg_work);
 
+#ifdef CONFIG_USB_HOTPLUG
+	/* Delay a bit toensure registers are updated */
+	udelay(1);
+
+	clk_disable(tegra->clk);
+#endif
+
 	dev_info(&pdev->dev, "otg transceiver registered\n");
 	return 0;
 
@@ -517,7 +535,7 @@ err_io:
 err_clken:
 	clk_put(tegra->clk);
 err_clk:
-	//wake_lock_destroy(&tegra->wake_lock);
+	wake_lock_destroy(&tegra->wake_lock);
 	platform_set_drvdata(pdev, NULL);
 	kfree(tegra);
 	return err;
@@ -532,7 +550,7 @@ static int __exit tegra_otg_remove(struct platform_device *pdev)
 	iounmap(tegra->regs);
 	clk_disable(tegra->clk);
 	clk_put(tegra->clk);
-	//wake_lock_destroy(&tegra->wake_lock);
+	wake_lock_destroy(&tegra->wake_lock);
 	platform_set_drvdata(pdev, NULL);
 	kfree(tegra);
 
@@ -576,6 +594,10 @@ static void tegra_otg_resume(struct device *dev)
 	val = otg_readl(tegra, TEGRA_USB_PHY_WAKEUP_REG_OFFSET) | tegra->intr_reg_data;
 	otg_writel(tegra, val, TEGRA_USB_PHY_WAKEUP_REG_OFFSET);
 	spin_unlock_irqrestore(&tegra->lock, flags);		
+	
+	/* Delay a bit toensure registers are updated */
+	udelay(1);
+
 	clk_disable(tegra->clk);
 	
 	/* Check if we are in device mode with something plugged to us */

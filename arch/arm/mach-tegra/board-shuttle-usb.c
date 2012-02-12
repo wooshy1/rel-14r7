@@ -77,11 +77,6 @@ hub-less systems.
 
 #ifdef CONFIG_USB_SUPPORT
 
-static struct platform_device androidusb_device = {
-	.name   = "android_usb",
-	.id     = -1,
-};
-
 static struct tegra_utmip_config utmi_phy_config[] = {
 	[0] = {
 		.hssync_start_delay = 0,
@@ -208,7 +203,6 @@ static struct platform_device *shuttle_usb_devices[] __initdata = {
 	/* OTG should be the first to be registered */
 	&tegra_otg_device,
 #endif
-	&androidusb_device,		/* should come AFTER ums and acm */
 	&tegra_udc_device, 		/* USB gadget */
 	&tegra_ehci3_device,
 };

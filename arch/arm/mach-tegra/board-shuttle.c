@@ -59,6 +59,7 @@
 #include "devices.h"
 #include "pm.h"
 #include "wakeups-t2.h"
+#include "wdt-recovery.h"
 
 
 /* NVidia bootloader tags and parsing routines */
@@ -312,7 +313,7 @@ static int __init get_cfg_from_tags(void)
 		pr_info("Nvidia TAG: framebuffer: %lu @ 0x%08lx\n",tegra_bootloader_fb_size,tegra_bootloader_fb_start);
 		
 		/* disable bootloader screen copying ... */
-		tegra_bootloader_fb_size = tegra_bootloader_fb_start = 0;
+//		tegra_bootloader_fb_size = tegra_bootloader_fb_start = 0;
 	}
 	
 	/* If the LP0 vector is found, use it */
@@ -327,10 +328,6 @@ static int __init get_cfg_from_tags(void)
 
 		pr_info("Nvidia TAG: LP0: %lu @ 0x%08lx\n",tegra_lp0_vec_size,tegra_lp0_vec_start);		
 		
-		/* Until we find out if the bootloader supports the workaround required to implement
-		   LP0, disable it */
-		tegra_lp0_vec_start = tegra_lp0_vec_size = 0;
-
 	}
 	
 	return 0;
@@ -864,6 +861,12 @@ static void __init tegra_shuttle_init(void)
 
 	/* Release the tegra bootloader framebuffer */
 	tegra_release_bootloader_fb();
+
+	/* Initialize the watchdog suspend recovery */
+#ifdef CONFIG_TEGRA_WDT_RECOVERY
+	tegra_wdt_recovery_init();
+#endif
+
 }
 
 static void __init tegra_shuttle_reserve(void)
