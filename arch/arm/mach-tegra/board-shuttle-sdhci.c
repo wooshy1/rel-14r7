@@ -59,16 +59,22 @@ void shuttle_wifi_set_cd(int val)
 		
 		/* Let the SDIO infrastructure know about the change */
 		if (wlan_status_cb) {
-			wlan_status_cb(val, wlan_status_cb_devid);
+			wlan_status_cb(val /*ignored*/ , wlan_status_cb_devid);
 		} else
 			pr_info("%s: Nobody to notify\n", __func__);
 	}
 }
 EXPORT_SYMBOL_GPL(shuttle_wifi_set_cd);
 
-/* 2.6.36 version has a hook to check card status. Use it */
+/* Called by the SDHCI bus driver to get the card status */
+static unsigned int shuttle_wlan_status(struct device* dev)
+{
+	return shuttle_wlan_cd;
+}
+
+/* Called by the SDHCI bus driver to register a callback to signal card status has changed */
 static int shuttle_wlan_status_register(
-		void (*callback)(int card_present, void *dev_id),
+		void (*callback)(int card_present_ignored, void *dev_id),
 		void *dev_id)
 {
 	if (wlan_status_cb)
@@ -81,6 +87,7 @@ static int shuttle_wlan_status_register(
 struct tegra_sdhci_platform_data shuttle_wlan_data = {
 	.mmc_data = {
 		.register_status_notify	= shuttle_wlan_status_register, 
+		.status = shuttle_wlan_status,
 	},
 	.cd_gpio = -1,
 	.wp_gpio = -1,

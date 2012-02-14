@@ -926,7 +926,6 @@ static void sdhci_send_command(struct sdhci_host *host, struct mmc_command *cmd)
 	}
 
 	mod_timer(&host->timer, jiffies + 10 * HZ);
-	wake_lock(&host->mmc->cmd_wake_lock);
 
 	host->cmd = cmd;
 
@@ -1588,7 +1587,6 @@ static void sdhci_tasklet_finish(unsigned long param)
 	spin_lock_irqsave(&host->lock, flags);
 
 	del_timer(&host->timer);
-	wake_unlock(&host->mmc->cmd_wake_lock);
 
 	mrq = host->mrq;
 
