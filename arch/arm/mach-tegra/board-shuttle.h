@@ -56,18 +56,18 @@
 #define SHUTTLE_MEM_SIZE 		SZ_512M			/* Total memory */
 
 /*#define SHUTTLE_GPU_MEM_SIZE 	SZ_256M*/		/* Memory reserved for GPU */
-#define SHUTTLE_GPU_MEM_SIZE 	SZ_128M		/* Memory reserved for GPU */
+/*#define SHUTTLE_GPU_MEM_SIZE 	SZ_128M*/		/* Memory reserved for GPU */
 /*#define SHUTTLE_GPU_MEM_SIZE 	SZ_64M*/		/* Memory reserved for GPU */
-/*#define SHUTTLE_GPU_MEM_SIZE 	(45*SZ_2M)*/	/* Memory reserved for GPU */
+#define SHUTTLE_GPU_MEM_SIZE 	(192*SZ_1M)	/* Memory reserved for GPU */
 
 /*#define SHUTTLE_FB1_MEM_SIZE   SZ_4M*/      	/* Memory reserved for Framebuffer 1: LCD */
 /*#define SHUTTLE_FB2_MEM_SIZE   SZ_8M*/      	/* Memory reserved for Framebuffer 2: HDMI out */
 
-#define SHUTTLE_FB1_MEM_SIZE   SZ_8M      		/* Memory reserved for Framebuffer 1: LCD */
-#define SHUTTLE_FB2_MEM_SIZE   SZ_16M      		/* Memory reserved for Framebuffer 2: HDMI out */
+#define SHUTTLE_FB1_MEM_SIZE   (5*SZ_1M)      		/* Memory reserved for Framebuffer 1: LCD */
+#define SHUTTLE_FB2_MEM_SIZE   SZ_8M      		/* Memory reserved for Framebuffer 2: HDMI out */
 
 
-#define DYNAMIC_GPU_MEM 1						/* use dynamic memory for GPU */
+/*#define DYNAMIC_GPU_MEM 1*/						/* use dynamic memory for GPU */
 
 /* LCD panel to use */
 /* #define SHUTTLE_1280x800PANEL_1 */
@@ -81,7 +81,7 @@
 #define SHUTTLE_1280x720HDMI
 
 
-/*#define SHUTTLE_48KHZ_AUDIO*/ /* <- define this if you want 48khz audio sampling rate instead of 44100Hz */
+#define SHUTTLE_48KHZ_AUDIO /* <- define this if you want 48khz audio sampling rate instead of 44100Hz */
 
 // TPS6586x GPIOs as registered 
 #define PMU_GPIO_BASE		(TEGRA_NR_GPIOS) 

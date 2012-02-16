@@ -49,7 +49,7 @@ static struct gpio_keys_button shuttle_keys[] = {
 	[2] = {
 		.gpio = SHUTTLE_KEY_POWER,
 		.active_low = true,
-		.debounce_interval = 50,
+		.debounce_interval = 125,
 		.wakeup = true,		
 		.code = KEY_POWER,
 		.type = EV_KEY,		
@@ -91,7 +91,7 @@ static struct gpio_keys_button shuttle_keys[] = {
 static struct gpio_keys_platform_data shuttle_keys_platform_data = {
 	.buttons 	= shuttle_keys,
 	.nbuttons 	= ARRAY_SIZE(shuttle_keys),
-	.rep		= true, /* auto repeat enabled */
+	.rep		= false, /* auto repeat enabled */
 };
 
 static struct platform_device shuttle_keys_device = {
