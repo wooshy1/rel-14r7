@@ -14,6 +14,8 @@
  *
  */ 
 
+//#define DEBUG
+
 #include <linux/kobject.h>
 #include <linux/module.h>
 #include <linux/delay.h>
@@ -121,49 +123,17 @@ static struct it7260_ts_data *gl_ts;
 
 static int it7260_read_query_buffer(struct it7260_ts_data *ts,unsigned char * pucData)
 {
-	int ret;
-	char addr = QUERY_BUFFER_INDEX;
-	struct i2c_msg msgs[] = {
-		{
-		 .addr = ts->client->addr,
-		 .flags = 0,
-		 .len = 1,
-		 .buf = &addr,
-		 },
-		{
-		 .addr = ts->client->addr,
-		 .flags = I2C_M_RD,
-		 .len = 1,
-		 .buf = pucData,
-		 },
-	};
-	ret = i2c_transfer(ts->client->adapter, msgs, 2);
-	if (ret != 2) {
+	s32 ret = i2c_smbus_read_byte_data(ts->client,QUERY_BUFFER_INDEX);
+	if (ret < 0)
 		return -1;
-	}
+	*pucData = ret;
 	return 0;
 }
 
 static int it7260_read_command_response_buffer(struct it7260_ts_data *ts,unsigned char * pucData, unsigned int unDataLength)
 {
-	int ret;
-	char addr = COMMAND_RESPONSE_BUFFER_INDEX;
-	struct i2c_msg msgs[] = {
-		{
-		 .addr = ts->client->addr,
-		 .flags = 0,
-		 .len = 1,
-		 .buf = &addr,
-		 },
-		{
-		 .addr = ts->client->addr,
-		 .flags = I2C_M_RD,
-		 .len = unDataLength,
-		 .buf = pucData,
-		 },
-	};
-	ret = i2c_transfer(ts->client->adapter, msgs, 2);
-	if (ret != 2) {
+	s32 ret = i2c_smbus_read_i2c_block_data(ts->client,COMMAND_RESPONSE_BUFFER_INDEX,unDataLength,pucData);
+	if (ret != unDataLength) {
 		dev_err(&ts->client->dev,"read command response buffer failed\n");
 		return -1;
 	}
@@ -172,48 +142,18 @@ static int it7260_read_command_response_buffer(struct it7260_ts_data *ts,unsigne
 
 static int it7260_read_point_buffer(struct it7260_ts_data *ts,unsigned char * pucData)
 {
-	int ret;
-	char addr = POINT_BUFFER_INDEX;
-	struct i2c_msg msgs[] = {
-		{
-		 .addr = ts->client->addr,
-		 .flags = 0,
-		 .len = 1,
-		 .buf = &addr,
-		 },
-		{
-		 .addr = ts->client->addr,
-		 .flags = I2C_M_RD,
-		 .len = 14,
-		 .buf = pucData,
-		 },
-	};
-	ret = i2c_transfer(ts->client->adapter, msgs, 2);
-	if (ret != 2) {
+	s32 ret = i2c_smbus_read_i2c_block_data(ts->client,POINT_BUFFER_INDEX,14,pucData);
+	if (ret != 14) {
 		dev_err(&ts->client->dev,"read point buffer failed\n");
 		return -1;
 	}
 	return 0;
 }
 
-static int it7260_write_command_buffer(struct it7260_ts_data *ts,unsigned char * pucData, unsigned int unDataLength)
+static int it7260_write_command_buffer(struct it7260_ts_data *ts,const unsigned char * pucData, unsigned int unDataLength)
 {
-	int ret;
-	char buf[16];
-	struct i2c_msg msgs[] = {
-		{
-		 .addr = ts->client->addr,
-		 .flags = 0,
-		 .len = 1+unDataLength,
-		 .buf = &buf[0],
-		 },
-	};
-	
-	buf[0] = POINT_BUFFER_INDEX;
-	memcpy(buf+1,pucData,unDataLength);
-	
-	ret = i2c_transfer(ts->client->adapter, msgs, 1);
-	if (ret != 1) {
+	s32 ret = i2c_smbus_write_i2c_block_data(ts->client,COMMAND_BUFFER_INDEX,unDataLength,pucData);
+	if (ret != 0) {
 		unsigned int i;
 		dev_err(&ts->client->dev,"write command buffer failed:\n");
 		for (i=0;i<unDataLength;i++) {
@@ -251,6 +191,391 @@ static int it7260_wait_for_idle(struct it7260_ts_data *ts)
 	}
 	return 0;
 }
+
+/* reverse engineered from IT7260 app */
+static int it7260_tx_cmd(struct it7260_ts_data *ts, const unsigned char* cmd, int cmdlen)
+{
+	int ret;
+	
+	/* Wait until idle */
+	if ( (ret = it7260_wait_for_idle(ts)) < 0 )
+		return ret;
+		
+	/* Write the command */
+	if ( (ret = it7260_write_command_buffer(ts,cmd,cmdlen)) < 0 ) 
+		return ret;
+		
+	/* Wait until idle */
+	if ( (ret = it7260_wait_for_idle(ts)) < 0 )
+		return ret;
+
+	return 0;
+}
+
+
+/* reverse engineered from IT7260 app */
+static int it7260_tx_cmd_rx_status(struct it7260_ts_data *ts, const unsigned char* cmd, int cmdlen)
+{
+	int ret;
+	unsigned char ans[2];
+
+	/* Send command */
+	if ( (ret = it7260_tx_cmd(ts,cmd,cmdlen)) < 0 )
+		return ret;
+		
+	/* Read the response */
+	if ( (ret = it7260_read_command_response_buffer(ts,&ans[0],2)) < 0)
+		return ret;
+
+	/* Check the status */
+	if ((ans[0] | ans[1]) != 0) {
+		return -1;
+	}
+	return 0;
+}
+
+/* reverse engineered from IT7260 app */
+static int it7260_enter_fw_upgrade_mode(struct it7260_ts_data *ts)
+{
+    static const unsigned char cmd[] = {
+		0x60, 0x00, 'I', 'T', '7', '2'
+	};
+	return it7260_tx_cmd_rx_status(ts,cmd,6);
+}
+
+/* reverse engineered from IT7260 app */
+static int it7260_exit_fw_upgrade_mode(struct it7260_ts_data *ts)
+{
+    static const unsigned char cmd[] = {
+		0x60, 0x80, 'I', 'T', '7', '2'
+	};
+	return it7260_tx_cmd_rx_status(ts,cmd,6);
+}
+
+/* reverse engineered from IT7260 app */
+static int it7260_set_start_offset(struct it7260_ts_data *ts,unsigned int offset)
+{
+	unsigned char cmd[4];
+	cmd[0] = 0x61;
+	cmd[1] = 0;
+	cmd[2] = offset & 0xFF;
+	cmd[3] = offset >> 8;
+	return it7260_tx_cmd_rx_status(ts,cmd,4);
+}
+
+/* reverse engineered from IT7260 app */
+static int it7260_reinitialize_firmware(struct it7260_ts_data *ts)
+{
+	static const unsigned char cmd[1] = {
+		0x6F
+	};
+	
+	int ret;
+	unsigned char ans[2];
+	
+	/* Wait until idle */
+	if ( (ret = it7260_wait_for_idle(ts)) < 0 )
+		return ret;
+		
+	/* Write the command */
+	if ( (ret = it7260_write_command_buffer(ts,cmd,1)) < 0 ) 
+		return ret;
+		
+	/* Give the firmware a chance to init */
+	msleep(200);
+		
+	/* Wait until idle */
+	if ( (ret = it7260_wait_for_idle(ts)) < 0 )
+		return ret;
+	
+	/* Read the response */
+	if ( (ret = it7260_read_command_response_buffer(ts,&ans[0],2)) < 0)
+		return ret;
+
+	/* Check the status */
+	if ((ans[0] | ans[1]) != 0) {
+		return -1;
+	}
+	
+	return 0;
+}
+
+/* reverse engineered from IT7260 app */
+static int it7260_recalibrate_cap_sensor(struct it7260_ts_data *ts)
+{
+#if 1
+	// The test application uses this command
+	static const unsigned char cmd[6] = { 
+		CMD_CALIBRATE, 
+		0x00,			/* subcommand 0 */
+		0x00, 			/* Enable autotune */
+		0x00, 0x00,  	/* threshold value = 0x0001 */
+		0x00};
+#else
+	// We try to setup an adaptive calibration...
+	static const unsigned char cmd[6] = { 
+		CMD_CALIBRATE, 
+		0x00,			/* subcommand 0 */
+		0x01, 			/* Enable autotune */
+		0x01, 0x00,  	/* threshold value = 0x0001 */
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+#endif
+
+	
+	unsigned char ans[6];
+	int ret;
+		
+	/* Wait until idle */
+	if ( (ret = it7260_wait_for_idle(ts)) < 0 )
+		return ret;
+		
+	/* Write the command */
+	if ( (ret = it7260_write_command_buffer(ts,cmd,6)) < 0 ) 
+		return ret;
+
+	/* Give time for the recalibration process. Takes 0.9seconds ... */
+	msleep(900);
+		
+	/* Wait until idle */
+	if ( (ret = it7260_wait_for_idle(ts)) < 0 )
+		return ret;
+	
+	/* Read the response */
+	if ( (ret = it7260_read_command_response_buffer(ts,&ans[0],6)) < 0)
+		return ret;
+
+	return 0;
+}
+
+// Power on touchscreen
+static int it7260_power_up(struct it7260_ts_data *ts)
+{
+	// Power on device
+	static unsigned char powerOnCmd[] = {
+		CMD_SET_POWER_MODE, 0x00, 0x00 
+	}; /* Full power mode */
+	
+	return it7260_tx_cmd_rx_status(ts,powerOnCmd,3);
+}
+
+// Power down the touchscreen
+static int it7260_power_down(struct it7260_ts_data *ts)
+{
+	// Power off device
+	static unsigned char powerOffCmd[] = {
+		CMD_SET_POWER_MODE, 0x00, 0x02 }; /* Sleep power mode */
+	
+	return it7260_tx_cmd_rx_status(ts,powerOffCmd,3);	
+}
+
+// Enable interrupts
+static int it7260_enable_interrupts(struct it7260_ts_data *ts)
+{
+	static unsigned char enableIntCmd[] = {
+		CMD_SET_CAP_SENSOR_INFO, 0x04, 0x01, 0x00 }; /* enable int, low level trigger */
+		
+	return it7260_tx_cmd_rx_status(ts,enableIntCmd,4);	
+}
+
+// Disable ints
+static int it7260_disable_interrupts(struct it7260_ts_data *ts)
+{
+	static unsigned char disableIntCmd[] = {
+		CMD_SET_CAP_SENSOR_INFO, 0x04, 0x00, 0x00 }; /* disable int, low level trigger */
+		
+	return it7260_tx_cmd_rx_status(ts,disableIntCmd,4);	
+}
+
+/* reverse engineered from IT7260 app */
+static int it7260_id_cap_sensor(struct it7260_ts_data *ts,unsigned char* id /*len=6*/)
+{
+	int ret;
+	unsigned char cmd[1] = { 
+		CMD_ID_CAP_SENSOR
+	};
+	
+	if ( (ret = it7260_tx_cmd(ts,cmd,1)) < 0)
+		return ret;
+
+	if ( (ret = it7260_read_command_response_buffer(ts,id,6)) < 0)
+		return ret;
+	
+	return 0;
+}
+
+
+/* reverse engineered from IT7260 app */
+static int it7260_get_version(struct it7260_ts_data *ts,unsigned char* fwVer /*len=4*/,unsigned char* cfgVer /*len=4*/  )
+{
+	int ret;
+	unsigned char cmd[2];
+	
+	if ( (ret = it7260_set_start_offset(ts,8)) < 0)
+		return ret;
+		
+	cmd[0] = 0x63;
+	cmd[1] = 0x04;
+	if ( (ret = it7260_tx_cmd(ts,cmd,2)) < 0)
+		return ret;
+
+	if ( (ret = it7260_read_command_response_buffer(ts,fwVer,4)) < 0)
+		return ret;
+	
+	if ( (ret = it7260_set_start_offset(ts,32760)) < 0)
+		return ret;
+		
+	cmd[0] = 0x63;
+	cmd[1] = 0x04;
+	if ( (ret = it7260_tx_cmd(ts,cmd,2)) < 0)
+		return ret;
+
+	if ( (ret = it7260_read_command_response_buffer(ts,cfgVer,4)) < 0)
+		return ret;
+    return 0;
+}
+
+/* reverse engineered from IT7260 app */
+static int it7260_read_flash(struct it7260_ts_data *ts,unsigned int len, unsigned char* buff, unsigned int offset)
+{
+	int ret;
+	unsigned char cmd[2];
+	
+	if ( (ret = it7260_set_start_offset(ts,offset)) < 0)
+		return ret;
+		
+	cmd[0] = 0x63;
+	cmd[1] = 0x04;
+	if ( (ret = it7260_tx_cmd(ts,cmd,2)) < 0)
+		return ret;
+
+	len &= (-4); /* Round to a multiple of 4 */
+	while (len) {
+	
+		if ( (ret = it7260_read_command_response_buffer(ts,buff,4)) < 0)
+			return ret;
+		
+		buff += 4;
+		len -= 4;
+	};
+	
+	return 0;
+}
+
+/* reverse engineered from IT7260 app */
+static int it7260_write_flash(struct it7260_ts_data *ts,unsigned int len,const unsigned char* buff,unsigned int offset)
+{
+  
+	int ret;
+	unsigned char cmd[6];
+	unsigned int flushblock = 0;
+	
+	if ( (ret = it7260_set_start_offset(ts,offset)) < 0)
+		return ret;
+  
+  	len &= (-4); /* Round to a multiple of 4 */
+	while (len) {
+			
+		cmd[0] = 0xF0;
+		cmd[1] = 0;
+		memcpy(&cmd[2],buff,4);
+			
+		if ( (ret = it7260_tx_cmd_rx_status(ts,buff,6)) < 0)
+			return ret;
+		
+		buff += 4;
+		len -= 4;
+		flushblock += 4;
+		if (flushblock >= 128) {
+			flushblock = 0;
+			
+			cmd[0] = 0xF1;
+			if ( (ret = it7260_write_command_buffer(ts,cmd,1)) < 0 ) 
+				return ret;
+		}
+	};
+}
+
+/* reverse engineered from IT7260 app */
+static int it7260_verify_flash(struct it7260_ts_data *ts,unsigned int len,const unsigned char* buff, unsigned int offset)
+{
+	int ret;
+	unsigned char cmd[2];
+	unsigned char cmp[4];
+	
+	if ( (ret = it7260_set_start_offset(ts,offset)) < 0)
+		return ret;
+		
+	cmd[0] = 0x63;
+	cmd[1] = 0x04;
+	if ( (ret = it7260_tx_cmd(ts,cmd,2)) < 0)
+		return ret;
+
+	len &= (-4); /* Round to a multiple of 4 */
+	while (len) {
+	
+		if ( (ret = it7260_read_command_response_buffer(ts,cmp,4)) < 0)
+			return ret;
+		
+		if (memcmp(cmp,buff,4))
+			return 1;
+		
+		buff += 4;
+		len -= 4;
+	};
+	
+	return 0;
+}
+
+
+/* reverse engineered from IT7260 app */
+static int it7260_firmware_upgrade(struct it7260_ts_data *ts,
+				const unsigned char* bufferFW, int nFWLength,
+				const unsigned char* bufferConfig, int nConfigLength
+				)
+{
+	int ret;
+	if ( (ret = it7260_enter_fw_upgrade_mode(ts)) < 0)
+		return ret;
+    if (nFWLength > 0 && ( ret = it7260_write_flash(ts, nFWLength, bufferFW, 0)) < 0)
+		return ret;
+	if (nConfigLength > 0 && ( ret = it7260_write_flash(ts, nConfigLength, bufferConfig, 32768 - nConfigLength)) < 0) 
+		return ret;
+    if (nFWLength > 0 && ( ret = it7260_verify_flash(ts, nFWLength, bufferFW, 0)) < 0)
+		return ret;
+	if (nConfigLength > 0 && ( ret = it7260_verify_flash(ts, nConfigLength, bufferConfig, 32768 - nConfigLength)) < 0) 
+		return ret;
+		
+	if ( (ret = it7260_exit_fw_upgrade_mode(ts)) < 0)
+		return ret;
+		
+	if ( (ret = it7260_reinitialize_firmware(ts)) < 0)
+		return ret;
+		
+	return 0;
+}
+
+static int it7260_get_2d_resolution(struct it7260_ts_data *ts,unsigned int *xres, unsigned int* yres)
+{
+	int ret;
+	static unsigned char cmd[3] = { 
+		CMD_GET_CAP_SENSOR_INFO,
+		0x02,0x00
+	};
+	unsigned char ans[6];
+	
+	if ( (ret = it7260_tx_cmd(ts,cmd,3)) < 0)
+		return ret;
+
+	if ( (ret = it7260_read_command_response_buffer(ts,ans,6)) < 0)
+		return ret;
+	
+	*xres = (int)(ans[2] + (ans[3] << 8));
+	*yres = (int)(ans[4] + (ans[5] << 8));
+	
+	return 0;
+}
+		
+
 
 static int it7260_flush(struct it7260_ts_data *ts)
 {
@@ -294,295 +619,54 @@ static int it7260_flush(struct it7260_ts_data *ts)
 	return ret;
 }
 
-// Power on touchscreen
-static int it7260_powerup(struct it7260_ts_data *ts)
-{
-	// Power on device
-	static unsigned char powerOnCmd[] = {
-		CMD_SET_POWER_MODE, 0x00, 0x00 }; /* Full power mode */
-	
-	// Flush device first
-	it7260_flush(ts);
-	
-	if (it7260_wait_for_idle(ts)) {
-		dev_err(&ts->client->dev,"wait for idle on powerup timed out\n");
-		return -1;
-	}
-		
-	if (it7260_write_command_buffer(ts,&powerOnCmd[0],3)<0) {
-		dev_err(&ts->client->dev,"failed to powerup\n");
-		return -1;
-	}
-	
-	return it7260_wait_for_idle(ts);
-}
-
-// Power down the touchscreen
-static int it7260_powerdown(struct it7260_ts_data *ts)
-{
-	// Power off device
-	static unsigned char powerOffCmd[] = {
-		CMD_SET_POWER_MODE, 0x00, 0x02 }; /* Sleep power mode */
-	
-	if (it7260_wait_for_idle(ts)) {
-		dev_err(&ts->client->dev,"wait for idle on powerdown timed out\n");
-		return -1;
-	}
-
-	if (it7260_write_command_buffer(ts,powerOffCmd,3)<0) {
-		dev_err(&ts->client->dev,"failed to powerdown\n");
-		return -1;
-	}
-	
-	return it7260_wait_for_idle(ts);
-}
-
-// Enable interrupts
-static int it7260_enable_interrupts(struct it7260_ts_data *ts)
-{
-	static unsigned char enableIntCmd[] = {
-		CMD_SET_CAP_SENSOR_INFO, 0x04, 0x01, 0x00 }; /* enable int, low level trigger */
-	unsigned char ans[2] = {0,0};
-	
-	if (it7260_wait_for_idle(ts)) {
-		dev_err(&ts->client->dev,"wait for idle on enable interrupts timed out\n");
-		return -1;
-	}
-		
-	if (it7260_write_command_buffer(ts,enableIntCmd,4)<0) {
-		dev_err(&ts->client->dev,"failed to enable interrupts\n");
-		return -1;
-	}
-
-	if (it7260_wait_for_idle(ts)) {
-		dev_err(&ts->client->dev,"wait for idle on enable interrupts timed out [2]\n");
-		return -1;
-	}
-
-	if (it7260_read_command_response_buffer(ts,&ans[0],2) < 0) {
-		dev_err(&ts->client->dev,"failed to read answer on enable interrupts\n");
-		return -1;
-	}
-	
-	if ((ans[0] | ans[1]) != 0) {
-		dev_err(&ts->client->dev,"failed to enable interrupts [0x%02x%02x]\n",ans[1],ans[0]);
-		return -1;
-	}
-	return 0;
-}
-
-// Disable ints
-static int it7260_disable_interrupts(struct it7260_ts_data *ts)
-{
-	static unsigned char disableIntCmd[] = {
-		CMD_SET_CAP_SENSOR_INFO, 0x04, 0x00, 0x00 }; /* disable int, low level trigger */
-	unsigned char ans[2] = {0,0};
-	
-	if (it7260_wait_for_idle(ts)) {
-		dev_err(&ts->client->dev,"wait for idle on disable interrupts timed out\n");
-		return -1;
-	}
-
-	if (it7260_write_command_buffer(ts,disableIntCmd,4)<0){
-		dev_err(&ts->client->dev,"failed to disable interrupts\n");
-		return -1;
-	}
-
-	if (it7260_wait_for_idle(ts)) {
-		dev_err(&ts->client->dev,"wait for idle on disable interrupts timed out [2]\n");
-		return -1;
-	}
-
-	if (it7260_read_command_response_buffer(ts,&ans[0],2) < 0) {
-		dev_err(&ts->client->dev,"failed to read answer on disable interrupts\n");
-		return -1;
-	}
-	
-	if ((ans[0] | ans[1]) != 0) {
-		dev_err(&ts->client->dev,"failed to disable interrupts [0x%02x%02x]\n",ans[1],ans[0]);
-		return -1;
-	}
-	return 0;
-}
-
-// Calibration process
-static int it7260_calibrate_cap_sensor(struct it7260_ts_data *ts)
-{
-	unsigned char pucCalibrate[] = { 
-		CMD_CALIBRATE, 
-		0x00,			/* subcommand 0 */
-		0x01, 			/* Enable autotune */
-		0x01, 0x00,  	/* threshold value = 0x0001 */
-		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
-	unsigned char ans[2] = {0,0};
-	int ret = 0;
-	
-	// Wait until idle
-	if (it7260_wait_for_idle(ts)) {
-		dev_err(&ts->client->dev,"wait for idle on recalibrate timed out\n");
-		return -1;
-	}
-	
-	// Send command
-	ret = it7260_write_command_buffer(ts,&pucCalibrate[0],12);
-	if (ret < 0) {
-		dev_err(&ts->client->dev,"failed to send calibration command\n");
-		return -1;
-	}
-	
-	// Wait until idle
-	if (it7260_wait_for_idle(ts)) {
-		dev_err(&ts->client->dev,"wait for idle on recalibrate timed out [2]\n");
-		return -1;
-	}
-
-	// Read status
-	it7260_read_command_response_buffer(ts,&ans[0],2);
-	return ((ans[0] | ans[1]) != 0) ? -1 : 0;
-}
 
 static int it7260_init(struct it7260_ts_data *ts)
 {
-	unsigned char pucCmd[15];
-	int ret = 0,i;
+	unsigned char id[6];
+	unsigned char fwVer[4], cfgVer[4];
+	
+	// Start emptying queue...
+	it7260_flush(ts);
 	
 	// Reinitialize Firmware
-	if (it7260_wait_for_idle(ts)) {
-		dev_err(&ts->client->dev,"wait for idle while reinitializing fw\n");
-		return -1;
-	}
-		
-	pucCmd[0] = CMD_RESET;
-	ret = it7260_write_command_buffer(ts,pucCmd,1);
-	if (ret < 0) {
+	if (it7260_reinitialize_firmware(ts)) {
 		dev_err(&ts->client->dev,"failed to reset touchpad\n");
 		return -1;
 	}
-	
-	// Let the IT reboot and init ... Takes some time ...
-	msleep(200);
-	
-	if (it7260_wait_for_idle(ts)) {
-		dev_err(&ts->client->dev,"wait for idle on reset touchpad timed out [2]\n");
-		return -1;
-	}
-
-	if (it7260_read_command_response_buffer(ts,&pucCmd[0],2) < 0) {
-		dev_err(&ts->client->dev,"failed to read answer to reset touchpad\n");
-		return -1;
-	}
-	
-	if ((pucCmd[0] | pucCmd[1]) != 0) {
-		dev_err(&ts->client->dev,"failed to reset touchpad [0x%02x%02x]\n",pucCmd[1],pucCmd[0]);
-		return -1;
-	}
-
-	// Wait until idle
-	if (it7260_wait_for_idle(ts)) {
-		dev_err(&ts->client->dev,"wait for idle on identify cap sensor timed out\n");
-		return -1;
-	}
-
-	// Now, we must poll the device waiting for it to settle... Otherwise, seems it does not respond...	
-	it7260_flush(ts);
-	
 
 	// Don't know why, but firmware tends not to answer .... But, nevertheless, the touchscreen works.
 	//  So, just ignore failures here
-			
-	// Identify
-    pucCmd[0] = CMD_ID_CAP_SENSOR; 
-	ret = it7260_write_command_buffer(ts,pucCmd,1);
-	if (ret < 0) {
-		dev_err(&ts->client->dev,"unable to send identify command\n");
-		return -1;
-	}
-
-	// Wait until idle
-	if (it7260_wait_for_idle(ts)) {
-		dev_err(&ts->client->dev,"wait for idle on identify cap sensor timed out [2]\n");
-		return -1;
-	}
-		
-	ret = it7260_read_command_response_buffer(ts,pucCmd,10);
-	if (ret < 0) {
+	
+	// Identify the capacitive sensor
+	if (it7260_id_cap_sensor(ts,id)) { 
 		dev_err(&ts->client->dev,"failed to get id from cap sensor\n");
-		return -1;
 	}
-	dev_info(&ts->client->dev,"ID: [%d] %02x%02x%02x%02x%02x%02x%02x%02x%02x%02x '%c%c%c%c%c%c%c%c%c'\n",
-		pucCmd[0],pucCmd[1],
-		pucCmd[2],pucCmd[3],pucCmd[4],pucCmd[5],
-		pucCmd[6],pucCmd[7],pucCmd[8],pucCmd[9],
-		pucCmd[0],pucCmd[1],
-		pucCmd[2],pucCmd[3],pucCmd[4],pucCmd[5],
-		pucCmd[6],pucCmd[7],pucCmd[8],pucCmd[9]
+	
+	dev_info(&ts->client->dev,"ID: [%d] %02x%02x%02x%02x%02x '%c%c%c%c%c'\n",
+		id[0],id[1],id[2],id[3],id[4],id[5],
+		id[1],id[2],id[3],id[4],id[5]
 	);
 
-	if (memcmp(&pucCmd[1],"ITE7260",7) != 0) {
+	if (memcmp(&id[1],"ITE72",5) != 0) {
 		dev_err(&ts->client->dev,"signature not found. Perhaps IT7260 does not want to ID itself...\n");
 	}
 	
 	// Get firmware information
-	
-	// Wait until idle
-	if (it7260_wait_for_idle(ts)) {
-		dev_err(&ts->client->dev,"wait for idle on firmware version timed out\n");
-	}
-		
-	pucCmd[0] = CMD_GET_CAP_SENSOR_INFO;
-	pucCmd[1] = 0x00;
-	ret = it7260_write_command_buffer(ts,pucCmd,2);
-	if (ret < 0) {
+	if (it7260_get_version(ts,fwVer,cfgVer)) {
 		dev_err(&ts->client->dev,"unable to get firmware version\n");
 	}
-
-	// Wait until idle
-	if (it7260_wait_for_idle(ts)) {
-		dev_err(&ts->client->dev,"wait for idle on firmware version timed out [2]\n");
-	}
-
-	memset(&pucCmd, 0, sizeof(pucCmd));
-	ret = it7260_read_command_response_buffer(ts,pucCmd,9);
-	if (ret < 0) {
-		dev_err(&ts->client->dev,"failed to read firmware version");
-	}
 	
-	ret = 0;
-	for (i = 5; i <= 8; i++) {
-		ret += pucCmd[i];
-	}
-	if (ret == 0) {
-		dev_info(&ts->client->dev,"no flash code");
-	} else {
-		dev_info(&ts->client->dev,"Flash code: %d.%d.%d.%d\n",
-			pucCmd[5],pucCmd[6],pucCmd[7],pucCmd[8]);
-	}
+	dev_info(&ts->client->dev,"fw Version: %d.%d.%d.%d\n",
+		fwVer[0],fwVer[1],fwVer[2],fwVer[3]);
 
-	// Get 2D Resolution
-	if (it7260_wait_for_idle(ts)) {
-		dev_err(&ts->client->dev,"wait for idle while getting 2D resolutions\n");
-	}
+	dev_info(&ts->client->dev,"cfg Version: %d.%d.%d.%d\n",
+		cfgVer[0],cfgVer[1],cfgVer[2],cfgVer[3]);
 		
-	pucCmd[0] = CMD_GET_CAP_SENSOR_INFO;
-	pucCmd[1] = 0x02;
-	pucCmd[2] = 0x00;
-	ret = it7260_write_command_buffer(ts,pucCmd,3);
-	if (ret < 0) {
+	/* Get 2D resolution */
+	ts->xres = ts->yres = 0;
+	if (it7260_get_2d_resolution(ts,&ts->xres,&ts->yres)) {
 		dev_err(&ts->client->dev,"unable to query for 2D resolutions\n");
 	}
-	
-	if (it7260_wait_for_idle(ts)) {
-		dev_err(&ts->client->dev,"wait for idle while getting 2D resolutions [2]\n");
-	}
-		
-	memset(&pucCmd, 0, sizeof(pucCmd));
-	ret = it7260_read_command_response_buffer(ts,pucCmd,11);
-	if (ret < 0) {
-		dev_err(&ts->client->dev,"unable to read 2D resolution\n");
-	}
-		
-	ts->xres = (int)(pucCmd[2] + (pucCmd[3] << 8));
-	ts->yres = (int)(pucCmd[4] + (pucCmd[5] << 8));
 
 	/* make sure to provide defaults, if touchscreen decided not to answer us */
 	if (ts->xres == 0)
@@ -593,7 +677,7 @@ static int it7260_init(struct it7260_ts_data *ts)
 	dev_info(&ts->client->dev,"Resolution: X:%d , Y:%d\n", ts->xres, ts->yres);
 
 	// Recalibrate it
-	it7260_calibrate_cap_sensor(ts);
+	it7260_recalibrate_cap_sensor(ts);
 	
 	return 0;
 }
@@ -964,17 +1048,13 @@ static void it7260_readpoints(struct it7260_ts_data *ts)
 	// If error
 	if(it7260_read_query_buffer(ts,&ucQuery)<0) {
 		dev_err(&ts->client->dev,"failed to read points [1]\n");
-		if (ts->use_irq)
-		   enable_irq(ts->client->irq);
-		return;
+		goto exit;
 	}
 	
 	// If point information available...
-	if(!(ucQuery & QUERY_PTINFO_STATUS_POINT))
-	{
-		if (ts->use_irq)
-		   enable_irq(ts->client->irq);
-		return ;
+	if(!(ucQuery & QUERY_PTINFO_STATUS_POINT)) { 
+		dev_dbg(&ts->client->dev,"no point information available\n");
+		goto exit;
 	}
 	
 	// Query point data
@@ -984,9 +1064,7 @@ static void it7260_readpoints(struct it7260_ts_data *ts)
 	if(ret < 0)
 	{
 		dev_err(&ts->client->dev,"failed to read points [2]\n");
-		if (ts->use_irq)
-		   enable_irq(ts->client->irq);
-		return;
+		goto exit;
 	}
 	
 #if 0
@@ -1003,19 +1081,13 @@ static void it7260_readpoints(struct it7260_ts_data *ts)
 #if 0
 		dev_info(&ts->client->dev,"gesture\n");
 #endif
-		if (ts->use_irq)
-		   enable_irq(ts->client->irq);
-		return;
+		goto exit;
 	} 			
 	
 #if 0
 	// palm -- 
 	if(pucPoint[1] & 0x01)
-	{
-		if (ts->use_irq)
-		   enable_irq(ts->client->irq);
-		return ;
-	}
+		goto exit;
 #endif
 
 	// Collect all finger data
@@ -1043,10 +1115,10 @@ static void it7260_readpoints(struct it7260_ts_data *ts)
 		idx++;
 	}
 
-#if 0
-	dev_info(&ts->client->dev,"got points: %d\n",idx);
+#ifdef DEBUG
+	dev_dbg(&ts->client->dev,"got points: %d\n",idx);
 	for (ret = 0; ret < idx; ret ++) {
-		dev_info(&ts->client->dev,"[%d] - X:%d, Y:%d, P:%d\n", ret,p[ret].x,p[ret].y,p[ret].p);
+		dev_dbg(&ts->client->dev,"[%d] - X:%d, Y:%d, P:%d\n", ret,p[ret].x,p[ret].y,p[ret].p);
 	}
 #endif
 	
@@ -1085,10 +1157,10 @@ static void it7260_readpoints(struct it7260_ts_data *ts)
 	
 	input_sync(ts->input_dev);	
 
-#if 0
-	dev_info(&ts->client->dev,"processed points:\n");
+#ifdef DEBUG
+	dev_dbg(&ts->client->dev,"processed points:\n");
 	for (ret = 0; ret < 3; ret ++) {
-		dev_info(&ts->client->dev,"[%d] - X:%d, Y:%d, P:%d, V:%d\n", ret,ts->pt[ret].data.x,ts->pt[ret].data.y,ts->pt[ret].data.p,ts->pt[ret].valid);
+		dev_dbg(&ts->client->dev,"[%d] - X:%d, Y:%d, P:%d, V:%d\n", ret,ts->pt[ret].data.x,ts->pt[ret].data.y,ts->pt[ret].data.p,ts->pt[ret].valid);
 	}
 #endif
 	
@@ -1101,7 +1173,7 @@ static void it7260_readpoints(struct it7260_ts_data *ts)
 		input_sync(ts->input_dev);	
 	} 
 
-	
+exit:	
 	if (ts->use_irq)
 		enable_irq(ts->client->irq);
 }
@@ -1174,7 +1246,7 @@ static ssize_t it7260_calibration_store(struct device *dev,
 	if (gl_ts->use_irq) 
 		disable_irq(gl_ts->client->irq);
 
-	it7260_calibrate_cap_sensor(gl_ts);
+	it7260_recalibrate_cap_sensor(gl_ts);
 	
 	if (gl_ts->use_irq) 
 		enable_irq(gl_ts->client->irq);
@@ -1206,7 +1278,7 @@ static ssize_t it7260_write(struct device *dev, struct device_attribute *attr,
 			if (gl_ts->use_irq) 
 				disable_irq(gl_ts->client->irq);
 		
-			it7260_calibrate_cap_sensor(gl_ts);
+			it7260_recalibrate_cap_sensor(gl_ts);
 			
 			if (gl_ts->use_irq) 
 				enable_irq(gl_ts->client->irq);
@@ -1297,12 +1369,10 @@ static int it7260_ts_probe(
 	ts->input_dev->id.version = 0x0100;
 	
 	// And capabilities
+//	set_bit(EV_SYN, ts->input_dev->evbit);
+//	set_bit(EV_KEY, ts->input_dev->evbit);
 	set_bit(EV_ABS, ts->input_dev->evbit);
-#if 0 // Why?
-	set_bit(EV_SYN, ts->input_dev->evbit);
-	set_bit(EV_KEY, ts->input_dev->evbit);
 	set_bit(BTN_TOUCH, ts->input_dev->keybit);
-#endif
 
 	input_set_abs_params(ts->input_dev, ABS_MT_TOUCH_MAJOR, 0, 15, 0, 0);
 	input_set_abs_params(ts->input_dev, ABS_MT_WIDTH_MAJOR, 0, 15, 0, 0);
@@ -1463,7 +1533,7 @@ static int it7260_ts_suspend(struct device *dev)
 	}
 	
 	// Power down the touchscreen
-	it7260_powerdown(ts);
+	it7260_power_down(ts);
 
 	// Disable the touchpad
 	if (ts->disable_tp)
@@ -1471,6 +1541,7 @@ static int it7260_ts_suspend(struct device *dev)
 
 	return 0;
 }
+
 
 static int it7260_ts_resume(struct device *dev)
 {
@@ -1487,8 +1558,11 @@ static int it7260_ts_resume(struct device *dev)
 		hrtimer_start(&ts->hr_timer, ktime_set(1, 0), HRTIMER_MODE_REL);
 
 	// Power up the touchscreen
-	it7260_powerup(ts);
-		
+	it7260_power_up(ts);
+
+	// Empty queue...
+	it7260_flush(ts);
+	
 	// Enable interrupts, if being used
 	if (ts->use_irq) {
 		it7260_enable_interrupts(ts);
