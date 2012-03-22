@@ -577,7 +577,7 @@ int __init shuttle_gpu_register_devices(void)
 	err = platform_add_devices(shuttle_gfx_devices,
 				   ARRAY_SIZE(shuttle_gfx_devices));
 				   
-#if defined(DYNAMIC_GPU_MEM)				   
+#if defined(DYNAMIC_GPU_MEM)			   
 	/* Move the bootloader framebuffer to our framebuffer */
 	if (tegra_bootloader_fb_start > 0 && tegra_fb_start > 0 &&
 		tegra_fb_size > 0 && tegra_bootloader_fb_size > 0) {
